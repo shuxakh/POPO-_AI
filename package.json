@@ -3,6 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "start": "npx serve -s . -l $PORT"
+    "start": "npx serve -s client -l $PORT"
   }
 }
