@@ -5,35 +5,34 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Teacher — AI Hints (FAST WAV Slices)</title>
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:24px;background:#fafbff}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:24px;background:#0f172a;color:#e2e8f0}
     .wrap{max-width:1200px;margin:0 auto}
     .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-    button{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
-    button:disabled{opacity:.6;cursor:not-allowed}
-    .card{background:#fff;padding:14px;border:1px solid #ddd;border-radius:12px;margin-bottom:12px}
-    .live{background:#f5f6fb;border:1px solid #ddd;border-radius:10px;min-height:70px;padding:10px}
+    button{padding:10px 14px;border-radius:10px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;cursor:pointer;transition:background .2s,border .2s}
+    button:hover{background:#273549;border-color:#3b4b63}
+    button:disabled{opacity:.6;cursor:not-allowed;background:#1a2536;border-color:#273549}
+    input[type="text"], input[type="search"], textarea{background:#0b1626;border:1px solid #334155;border-radius:10px;padding:10px;color:#e2e8f0}
+    input[type="text"]::placeholder,input[type="search"]::placeholder,textarea::placeholder{color:#64748b}
+    .card{background:#1f2937;padding:14px;border:1px solid #2d3b4f;border-radius:12px;margin-bottom:12px}
+    .live{background:#111c2d;border:1px solid #273549;border-radius:10px;min-height:70px;padding:10px}
     .topgrid{display:grid;grid-template-columns:1fr 320px;gap:12px;align-items:start}
     @media(max-width:900px){.topgrid{grid-template-columns:1fr}}
     .twocol{display:grid;grid-template-columns:1fr 1fr;gap:12px}
     @media(max-width:900px){.twocol{grid-template-columns:1fr}}
     .feed{display:flex;flex-direction:column;gap:12px}
-    .entry{background:#fff;border:1px solid #ddd;border-radius:12px;padding:10px}
-    .cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
-    @media(max-width:900px){.cols{grid-template-columns:1fr}}
-    .col{border:1px solid #ddd;border-radius:10px;padding:8px}
-    .error{background:#ffe9d6;border-color:#ffb980}
-    .def{background:#efe7ff;border-color:#c9b6ff}
-    .syn{background:#e8f7e8;border-color:#b8e6b8}
-    .errItem,.defItem,.synItem{margin:6px 0;padding:6px;border-radius:8px}
-    .errItem{background:#fff0e5;border:1px solid #ffc58a}
-    .defItem{background:#f5f0ff;border:1px solid #c9b6ff}
-    .synItem{background:#f0fff0;border:1px solid #b8e6b8}
-    .ex{color:#444;font-style:italic;margin-top:4px}
-    .note{color:#666;font-size:.9rem}
-    .diag{font-family:ui-monospace,Menlo,Consolas,monospace;background:#0b1020;color:#d9e1ff;border-radius:12px;border:1px solid #263056;padding:12px;line-height:1.35;overflow:auto;position:relative}
+    .entry{background:#1f2937;border:1px solid #2d3b4f;border-radius:12px;padding:10px}
+    .transCard{border:1px solid #334155;border-radius:12px;background:#1b2638;padding:12px}
+    .transCard h4{margin:0 0 8px;color:#93c5fd}
+    .transList{display:flex;flex-direction:column;gap:8px}
+    .transItem{background:#132034;border:1px solid #22344c;border-radius:10px;padding:10px}
+    .transHead{display:flex;justify-content:space-between;align-items:center;gap:8px}
+    .posTag{font-size:.8rem;color:#60a5fa;text-transform:uppercase;letter-spacing:.03em}
+    .ru{margin-top:4px;font-weight:600;color:#e0f2fe}
+    .note{color:#94a3b8;font-size:.9rem}
+    .diag{display:none}
     .ghost{position:absolute;right:8px;top:8px;opacity:.3}
     .diag:hover .ghost{opacity:1}
-    label.small{font-size:.9rem;color:#333}
+    label.small{font-size:.9rem;color:#cbd5f5}
   </style>
 </head>
 <body>
@@ -68,7 +67,7 @@
     <div class="card">
       <h3 style="margin:0 0 8px">Quick word</h3>
       <div class="row" style="gap:8px">
-        <input id="manualText" placeholder="Type a word or phrase…" style="flex:1;padding:10px;border:1px solid #ddd;border-radius:10px">
+        <input id="manualText" placeholder="Type a word or phrase…" style="flex:1;padding:10px;border:1px solid #334155;border-radius:10px;background:#0b1626;color:#e2e8f0">
         <button id="sendManual">Send</button>
       </div>
       <p class="note" style="margin-top:8px">Добавляет текст в транскрипт учителя.</p>
@@ -86,21 +85,18 @@
     </div>
   </div>
 
-  <h3 style="margin-top:16px">AI hints (newest on top)</h3>
+  <h3 style="margin-top:16px">AI translations (newest on top)</h3>
   <div id="feed" class="feed"></div>
 
-  <h3 style="margin-top:16px">Diagnostics</h3>
-  <div id="diag" class="diag">
-    idle
-    <button id="forceFlush" class="ghost">Force flush</button>
-  </div>
+  <div id="diag" class="diag" aria-hidden="true"></div>
 
   <p class="note" style="margin-top:8px">Status: <span id="status">idle</span></p>
 </div>
 
 <script>
 /* ===== STATE ===== */
-let SR, keepTeacher=false, tFull="", sFull="", tLast="", sLast="";
+let SR, keepTeacher=false, tFull="", sFull="", sLast="";
+let hintBusy=false, hintNeedsRetry=false, lastStudentHint="";
 let displayStream=null, srcStream=null;
 
 let audioCtx=null, sourceNode=null, gainNode=null, analyser=null, scriptNode=null;
@@ -142,8 +138,7 @@ function initSR(){
       if(r.isFinal){
         const piece=r[0].transcript.trim(); if(!piece) continue;
         tFull+=(tFull?' ':'')+piece; teacherOut.textContent=tFull;
-        const tt=tail(tFull); if(tt && tt!==tLast){ tLast=tt; requestHints(); }
-        clearTimeout(tPauseTimer); tPauseTimer=setTimeout(()=>{ tFull=''; tLast=''; teacherOut.textContent='—'; }, PAUSE_MS);
+        clearTimeout(tPauseTimer); tPauseTimer=setTimeout(()=>{ tFull=''; teacherOut.textContent='—'; }, PAUSE_MS);
       }else interim+=r[0].transcript;
     }
     if(interim) teacherOut.textContent=(tFull+' '+interim).trim();
@@ -153,7 +148,7 @@ function initSR(){
 async function startTeacher(){
   if(!supportsSR()){ alert('Update Chrome for SpeechRecognition API.'); return; }
   if(!SR) initSR(); try{ await navigator.mediaDevices.getUserMedia({audio:true}); }catch{}
-  tFull=""; tLast=""; teacherOut.textContent="Listening (Teacher Mic)…";
+  tFull=""; teacherOut.textContent="Listening (Teacher Mic)…";
   keepTeacher=true; SR.start();
   document.getElementById('micBtn').disabled=true;
   document.getElementById('stopTeacher').disabled=false;
@@ -219,7 +214,7 @@ async function uploadWavSamples(samples){
         sFull+=(sFull?' ':'')+text; studentOut.textContent=sFull;
         const st=tail(sFull); if(st && st!==sLast){ sLast=st; requestHints(); }
         clearTimeout(sPauseTimer);
-        sPauseTimer=setTimeout(()=>{ sFull=''; sLast=''; studentOut.textContent='—'; }, PAUSE_MS);
+        sPauseTimer=setTimeout(()=>{ sFull=''; sLast=''; lastStudentHint=''; hintNeedsRetry=false; hintBusy=false; studentOut.textContent='—'; }, PAUSE_MS);
       }else{
         updateDiag({msg:'STT ok, but empty text'});
       }
@@ -322,7 +317,7 @@ async function startStudent(){
   scriptNode.connect(audioCtx.destination);
 
   // reset UI/state
-  sFull=""; sLast=""; studentOut.textContent="Capturing Student Tab…";
+  sFull=""; sLast=""; lastStudentHint=""; hintNeedsRetry=false; hintBusy=false; studentOut.textContent="Capturing Student Tab…";
   flushes=0; lastFlushAt='—'; sttBusy=false; procCalls=0;
   document.getElementById('tabBtn').disabled=true;
   document.getElementById('stopStudent').disabled=false;
@@ -348,33 +343,65 @@ function stopStudent(){
   document.getElementById('tabBtn').disabled=false;
   document.getElementById('stopStudent').disabled=true;
   statusEl.textContent = keepTeacher ? 'listening (teacher)' : 'idle';
+  lastStudentHint="";
+  hintNeedsRetry=false;
+  hintBusy=false;
   updateDiag({msg:'student stopped'});
 }
 
 /* ===== Hints ===== */
-let busy=false;
 async function requestHints(){
-  if(busy) return; busy=true;
+  const current = sFull.trim();
+  if(!current){
+    hintNeedsRetry=false;
+    lastStudentHint="";
+    return;
+  }
+  if(current===lastStudentHint && !hintNeedsRetry) return;
+  if(hintBusy){
+    hintNeedsRetry=true;
+    return;
+  }
+  hintBusy=true;
+  hintNeedsRetry=false;
   try{
-    const r=await fetch('/api/hints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({teacher:tFull,student:sFull})});
+    const r=await fetch('/api/hints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({student:current})});
+    if(!r.ok){
+      const t=await r.text().catch(()=> '');
+      console.warn('/api/hints', r.status, r.statusText, t);
+      return;
+    }
     const d=await r.json().catch(()=>null);
     if(d?.card) prependCard(d.card);
+    lastStudentHint=current;
   }catch(e){ console.warn(e); }
-  busy=false;
+  finally{
+    hintBusy=false;
+    if(hintNeedsRetry){
+      hintNeedsRetry=false;
+      requestHints();
+    }
+  }
 }
 function prependCard(card){
-  const has=(card.errors&&card.errors.length)||(card.definitions&&card.definitions.length)||(card.synonyms&&card.synonyms.length);
-  if(!has) return;
+  const items=Array.isArray(card.translations)?card.translations:[];
+  if(!items.length) return;
   const div=document.createElement('div'); div.className='entry';
-  div.innerHTML=`<div class="cols">
-    <div class="col error"><h4>Errors & Fix</h4><div class="errors"></div></div>
-    <div class="col def"><h4>Definitions</h4><div class="defs"></div></div>
-    <div class="col syn"><h4>Synonyms</h4><div class="syns"></div></div>
+  const listHtml=items.map(x=>{
+    const word=(x.word||'').trim();
+    const pos=(x.pos||'').trim();
+    const ru=(x.translation_ru||'').trim();
+    if(!word || !ru) return '';
+    return `<div class="transItem">
+      <div class="transHead"><b>${word}</b>${pos?`<span class="posTag">${pos}</span>`:''}</div>
+      <div class="ru">${ru}</div>
+    </div>`;
+  }).filter(Boolean).join('');
+  if(!listHtml) return;
+  div.innerHTML=`<div class="transCard">
+    <h4>Перевод слов студента</h4>
+    <div class="transList">${listHtml}</div>
   </div>`;
-  const eW=div.querySelector('.errors'), dW=div.querySelector('.defs'), sW=div.querySelector('.syns');
-  (card.errors||[]).forEach(e=>{ const el=document.createElement('div'); el.className='errItem'; el.innerHTML=`<b>${e.title||'Mistake'}</b><br>❌ ${e.wrong||''}<br>✅ ${e.fix||''}<div>${e.explanation||''}</div>`; eW.appendChild(el); });
-  (card.definitions||[]).forEach(x=>{ const el=document.createElement('div'); el.className='defItem'; el.innerHTML=`<b>${x.word||''}</b> (${x.pos||''}) — ${x.simple_def||''}${x.example?`<div class="ex">e.g., ${x.example}</div>`:''}`; dW.appendChild(el); });
-  (card.synonyms||[]).forEach(x=>{ const el=document.createElement('div'); el.className='synItem'; el.innerHTML=`<b>${x.word||''}</b> (${x.pos||''}) → ${(x.list||[]).join(', ')}`; sW.appendChild(el); });
   feed.prepend(div); while(feed.children.length>30) feed.removeChild(feed.lastChild);
 }
 
@@ -382,9 +409,8 @@ function prependCard(card){
 document.getElementById('sendManual').onclick=()=>{
   const el=document.getElementById('manualText'); const t=el.value.trim(); if(!t) return;
   tFull=tFull?(tFull+' '+t):t; teacherOut.textContent=tFull;
-  const tt=tail(tFull); if(tt&&tt!==tLast){ tLast=tt; requestHints(); }
   el.value='';
-  clearTimeout(tPauseTimer); tPauseTimer=setTimeout(()=>{ tFull=''; tLast=''; teacherOut.textContent='—'; }, PAUSE_MS);
+  clearTimeout(tPauseTimer); tPauseTimer=setTimeout(()=>{ tFull=''; teacherOut.textContent='—'; }, PAUSE_MS);
 };
 
 /* ===== Bindings ===== */
