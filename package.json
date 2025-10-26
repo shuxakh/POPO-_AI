@@ -1,0 +1,15 @@
+{
+  "name": "teacher-only-ai-tutor",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "start:host": "HOST=0.0.0.0 node server/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "openai": "^4.56.0"
+  }
+}

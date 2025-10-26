@@ -1,0 +1,400 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Teacher — AI Hints (FAST WAV Slices)</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:24px;background:#fafbff}
+    .wrap{max-width:1200px;margin:0 auto}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+    button{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .card{background:#fff;padding:14px;border:1px solid #ddd;border-radius:12px;margin-bottom:12px}
+    .live{background:#f5f6fb;border:1px solid #ddd;border-radius:10px;min-height:70px;padding:10px}
+    .topgrid{display:grid;grid-template-columns:1fr 320px;gap:12px;align-items:start}
+    @media(max-width:900px){.topgrid{grid-template-columns:1fr}}
+    .twocol{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    @media(max-width:900px){.twocol{grid-template-columns:1fr}}
+    .feed{display:flex;flex-direction:column;gap:12px}
+    .entry{background:#fff;border:1px solid #ddd;border-radius:12px;padding:10px}
+    .cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+    @media(max-width:900px){.cols{grid-template-columns:1fr}}
+    .col{border:1px solid #ddd;border-radius:10px;padding:8px}
+    .error{background:#ffe9d6;border-color:#ffb980}
+    .def{background:#efe7ff;border-color:#c9b6ff}
+    .syn{background:#e8f7e8;border-color:#b8e6b8}
+    .errItem,.defItem,.synItem{margin:6px 0;padding:6px;border-radius:8px}
+    .errItem{background:#fff0e5;border:1px solid #ffc58a}
+    .defItem{background:#f5f0ff;border:1px solid #c9b6ff}
+    .synItem{background:#f0fff0;border:1px solid #b8e6b8}
+    .ex{color:#444;font-style:italic;margin-top:4px}
+    .note{color:#666;font-size:.9rem}
+    .diag{font-family:ui-monospace,Menlo,Consolas,monospace;background:#0b1020;color:#d9e1ff;border-radius:12px;border:1px solid #263056;padding:12px;line-height:1.35;overflow:auto;position:relative}
+    .ghost{position:absolute;right:8px;top:8px;opacity:.3}
+    .diag:hover .ghost{opacity:1}
+    label.small{font-size:.9rem;color:#333}
+  </style>
+</head>
+<body>
+
+<!-- держим аудио-тракт вкладки «живым» -->
+<audio id="tabAudioSink" autoplay muted playsinline style="display:none"></audio>
+
+<div class="wrap">
+  <h1>Teaching POPO — AI Hints</h1>
+
+  <div class="topgrid">
+    <div class="card">
+      <div class="row">
+        <label><b>Teacher:</b></label>
+        <button id="micBtn">🎙️ Teacher Mic</button>
+        <button id="stopTeacher" disabled>⏹️ Stop</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label><b>Student:</b></label>
+        <button id="tabBtn">🖥️ Student Tab (with audio)</button>
+        <button id="stopStudent" disabled>⏹️ Stop</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <input type="checkbox" id="fastMode" checked>
+        <label for="fastMode" class="small">Fast mode (WAV slices ~0.9s)</label>
+      </div>
+      <p class="note" style="margin-top:6px">
+        В диалоге Chrome выбери <b>Chrome Tab</b> и включи <b>Share tab audio</b>.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 8px">Quick word</h3>
+      <div class="row" style="gap:8px">
+        <input id="manualText" placeholder="Type a word or phrase…" style="flex:1;padding:10px;border:1px solid #ddd;border-radius:10px">
+        <button id="sendManual">Send</button>
+      </div>
+      <p class="note" style="margin-top:8px">Добавляет текст в транскрипт учителя.</p>
+    </div>
+  </div>
+
+  <div class="twocol">
+    <div>
+      <h3>Teacher transcript</h3>
+      <div id="teacherOut" class="live">—</div>
+    </div>
+    <div>
+      <h3>Student transcript</h3>
+      <div id="studentOut" class="live">—</div>
+    </div>
+  </div>
+
+  <h3 style="margin-top:16px">AI hints (newest on top)</h3>
+  <div id="feed" class="feed"></div>
+
+  <h3 style="margin-top:16px">Diagnostics</h3>
+  <div id="diag" class="diag">
+    idle
+    <button id="forceFlush" class="ghost">Force flush</button>
+  </div>
+
+  <p class="note" style="margin-top:8px">Status: <span id="status">idle</span></p>
+</div>
+
+<script>
+/* ===== STATE ===== */
+let SR, keepTeacher=false, tFull="", sFull="", tLast="", sLast="";
+let displayStream=null, srcStream=null;
+
+let audioCtx=null, sourceNode=null, gainNode=null, analyser=null, scriptNode=null;
+let sampleRate=48000;
+
+const PAUSE_MS=2500;
+let sPauseTimer=null, tPauseTimer=null;
+
+let sttBusy=false, flushes=0, lastFlushAt='—', ema=0, procCalls=0;
+const GAIN = 3.0;
+
+/* ===== UI ===== */
+const statusEl=document.getElementById('status');
+const teacherOut=document.getElementById('teacherOut');
+const studentOut=document.getElementById('studentOut');
+const feed=document.getElementById('feed');
+const diagEl=document.getElementById('diag');
+
+function now(){return new Date().toLocaleTimeString();}
+function tail(t,n=15){return (t||"").trim().split(/\s+/).slice(-n).join(" ").toLowerCase();}
+function updateDiag(extra={}){
+  diagEl.innerHTML=`
+time: ${now()}<br>
+proc: ${procCalls} • flushes: ${flushes} • sttBusy: ${sttBusy} • lastFlushAt: ${lastFlushAt} • gain: x${GAIN}<br>
+${extra.msg?('<span class="warn">'+extra.msg+'</span>'):''}
+<button id="forceFlush" class="ghost">Force flush</button>`;
+  document.getElementById('forceFlush').onclick=()=>manualFlush();
+}
+
+/* ===== Teacher mic (SpeechRecognition) ===== */
+function supportsSR(){return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;}
+function initSR(){
+  const S=window.SpeechRecognition||window.webkitSpeechRecognition;
+  SR=new S(); SR.lang='en-US'; SR.interimResults=true; SR.continuous=true;
+  SR.onresult=e=>{
+    let interim='';
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const r=e.results[i];
+      if(r.isFinal){
+        const piece=r[0].transcript.trim(); if(!piece) continue;
+        tFull+=(tFull?' ':'')+piece; teacherOut.textContent=tFull;
+        const tt=tail(tFull); if(tt && tt!==tLast){ tLast=tt; requestHints(); }
+        clearTimeout(tPauseTimer); tPauseTimer=setTimeout(()=>{ tFull=''; tLast=''; teacherOut.textContent='—'; }, PAUSE_MS);
+      }else interim+=r[0].transcript;
+    }
+    if(interim) teacherOut.textContent=(tFull+' '+interim).trim();
+  };
+  SR.onerror=()=>{}; SR.onend=()=>{ if(keepTeacher){ try{ SR.start(); }catch{} } };
+}
+async function startTeacher(){
+  if(!supportsSR()){ alert('Update Chrome for SpeechRecognition API.'); return; }
+  if(!SR) initSR(); try{ await navigator.mediaDevices.getUserMedia({audio:true}); }catch{}
+  tFull=""; tLast=""; teacherOut.textContent="Listening (Teacher Mic)…";
+  keepTeacher=true; SR.start();
+  document.getElementById('micBtn').disabled=true;
+  document.getElementById('stopTeacher').disabled=false;
+  statusEl.textContent='listening (teacher)';
+}
+function stopTeacher(){
+  keepTeacher=false; try{ SR && SR.stop(); }catch{}
+  document.getElementById('micBtn').disabled=false;
+  document.getElementById('stopTeacher').disabled=true;
+  if(!scriptNode) statusEl.textContent='idle';
+}
+
+/* ===== WAV helpers ===== */
+function floatTo16BitPCM(input){
+  const out=new Int16Array(input.length);
+  for(let i=0;i<input.length;i++){
+    let s=Math.max(-1,Math.min(1,input[i]));
+    out[i]=s<0 ? s*0x8000 : s*0x7FFF;
+  }
+  return out;
+}
+function encodeWAV(samples,sr){
+  const b=new ArrayBuffer(44 + samples.length*2);
+  const v=new DataView(b);
+  function ws(o,s){ for (let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); }
+  ws(0,'RIFF'); v.setUint32(4, 36 + samples.length*2, true);
+  ws(8,'WAVE'); ws(12,'fmt '); v.setUint32(16,16,true);
+  v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true);
+  v.setUint16(32,2,true); v.setUint16(34,16,true);
+  ws(36,'data'); v.setUint32(40, samples.length*2, true);
+  new Int16Array(b,44).set(floatTo16BitPCM(samples));
+  return new Blob([b],{type:'audio/wav'});
+}
+function mergeFloat32(bufs,total){
+  const r=new Float32Array(total); let o=0; for(const b of bufs){r.set(b,o); o+=b.length;} return r;
+}
+function u8ToBase64(u8){
+  const CHUNK=0x8000; let binary=''; for(let i=0;i<u8.length;i+=CHUNK){
+    binary+=String.fromCharCode.apply(null,u8.subarray(i,i+CHUNK));
+  } return btoa(binary);
+}
+
+/* ===== Upload WAV ===== */
+async function uploadWavSamples(samples){
+  if(!samples || samples.length===0) return;
+  const wav=encodeWAV(samples, sampleRate);
+  sttBusy=true; flushes++; lastFlushAt=now(); updateDiag({msg:`flush size=${wav.size}`});
+  try{
+    const buf=await wav.arrayBuffer();
+    const b64=u8ToBase64(new Uint8Array(buf));
+    const r=await fetch('/api/stt_student',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({audioBase64:b64, mime:'audio/wav'})
+    });
+    if(!r.ok){
+      const t=await r.text().catch(()=> '');
+      updateDiag({msg:`/api/stt_student ${r.status} ${r.statusText} ${t.slice(0,200)}`});
+    }else{
+      const d=await r.json().catch(()=> ({}));
+      const text=(d?.text||'').trim();
+      if(text){
+        sFull+=(sFull?' ':'')+text; studentOut.textContent=sFull;
+        const st=tail(sFull); if(st && st!==sLast){ sLast=st; requestHints(); }
+        clearTimeout(sPauseTimer);
+        sPauseTimer=setTimeout(()=>{ sFull=''; sLast=''; studentOut.textContent='—'; }, PAUSE_MS);
+      }else{
+        updateDiag({msg:'STT ok, but empty text'});
+      }
+    }
+  }catch(e){
+    updateDiag({msg:`upload error: ${e.message}`});
+  }finally{
+    sttBusy=false; updateDiag();
+  }
+}
+
+/* ===== FAST MODE: time-sliced WAV (без MediaRecorder) ===== */
+const SLICE_MS = 900;           // длительность куска
+const ENERGY_GATE = 0.005;      // порог для отсечения тишины
+let fastBufs=[], fastLen=0, lastSliceAt=0;
+
+function fastReset(){ fastBufs=[]; fastLen=0; lastSliceAt=performance.now(); }
+
+function fastFeedAndMaybeFlush(mono){
+  fastBufs.push(mono);
+  fastLen += mono.length;
+
+  const nowMs = performance.now();
+  if (nowMs - lastSliceAt >= SLICE_MS && !sttBusy){
+    // посчитаем RMS, чтобы не слать пустоту
+    let sum=0; for(const b of fastBufs){ for(let i=0;i<b.length;i++) sum+=b[i]*b[i]; }
+    const rms = Math.sqrt(sum / fastLen);
+    const samples = mergeFloat32(fastBufs, fastLen);
+    fastReset();
+    if (rms >= ENERGY_GATE){
+      uploadWavSamples(samples);
+    } else {
+      updateDiag({msg:`skip silent slice (rms=${rms.toFixed(4)})`});
+    }
+  }
+}
+function manualFlush(){
+  if (fastLen>0 && !sttBusy){
+    const samples = mergeFloat32(fastBufs, fastLen);
+    fastReset();
+    uploadWavSamples(samples);
+  }
+}
+
+/* ===== FALLBACK VAD (можно оставить на будущее) ===== */
+/* ... при желании вернём; сейчас fast-режим покрывает твой сценарий ... */
+
+/* ===== START Student ===== */
+async function startStudent(){
+  try{
+    displayStream = await navigator.mediaDevices.getDisplayMedia({video:true, audio:true});
+  }catch{
+    alert('Выбор вкладки отменён');
+    return;
+  }
+
+  const aTracks = displayStream.getAudioTracks();
+  if(!aTracks.length){
+    alert('Нет аудио! Включи "Share tab audio".');
+    displayStream.getTracks().forEach(t=>t.stop());
+    displayStream=null; return;
+  }
+
+  const sinkEl = document.getElementById('tabAudioSink');
+  try{ sinkEl.srcObject=displayStream; sinkEl.muted=true; await sinkEl.play(); }catch(e){ console.warn('tabAudioSink play() failed', e); }
+
+  const at=aTracks[0];
+  at.onmute  =()=>updateDiag({msg:'audio track MUTED'});
+  at.onunmute=()=>updateDiag({msg:'audio track UNMUTED'});
+  at.onended =()=>updateDiag({msg:'audio track ENDED'});
+  srcStream=new MediaStream([at]);
+
+  // аудио-пайп
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  await audioCtx.resume();
+  sampleRate = audioCtx.sampleRate;
+
+  sourceNode = audioCtx.createMediaStreamSource(srcStream);
+  gainNode   = audioCtx.createGain(); gainNode.gain.value = GAIN;
+  analyser   = audioCtx.createAnalyser(); analyser.fftSize = 512;
+
+  const BS = 2048; // маленький буфер => меньшая задержка
+  scriptNode = audioCtx.createScriptProcessor(BS, 2, 2);
+  fastReset();
+
+  scriptNode.onaudioprocess = (e)=>{
+    procCalls++;
+    const ch0 = e.inputBuffer.getChannelData(0);
+    const ch1 = e.inputBuffer.numberOfChannels>1 ? e.inputBuffer.getChannelData(1) : null;
+    const N = ch0.length;
+    const mono = new Float32Array(N);
+    if (ch1){ for (let i=0;i<N;i++) mono[i]=(ch0[i]+ch1[i])*0.5; } else mono.set(ch0);
+
+    fastFeedAndMaybeFlush(mono);
+  };
+
+  sourceNode.connect(gainNode);
+  gainNode.connect(analyser);
+  gainNode.connect(scriptNode);
+  scriptNode.connect(audioCtx.destination);
+
+  // reset UI/state
+  sFull=""; sLast=""; studentOut.textContent="Capturing Student Tab…";
+  flushes=0; lastFlushAt='—'; sttBusy=false; procCalls=0;
+  document.getElementById('tabBtn').disabled=true;
+  document.getElementById('stopStudent').disabled=false;
+  statusEl.textContent=keepTeacher ? 'listening (teacher + student)' : 'listening (student)';
+  updateDiag();
+
+  // Подсказка, если обработчик не тикает
+  setTimeout(()=>{ if(procCalls===0)
+    updateDiag({msg:'onaudioprocess не тикает — выбери Chrome Tab + Share tab audio; на вкладке действительно должен идти звук.'});
+  }, 4000);
+}
+
+function stopStudent(){
+  try{ const sinkEl=document.getElementById('tabAudioSink'); sinkEl.pause(); sinkEl.srcObject=null; }catch{}
+  try{ scriptNode && scriptNode.disconnect(); }catch{} scriptNode=null;
+  try{ analyser && analyser.disconnect(); }catch{} analyser=null;
+  try{ gainNode && gainNode.disconnect(); }catch{} gainNode=null;
+  try{ sourceNode && sourceNode.disconnect(); }catch{} sourceNode=null;
+  if(audioCtx){ try{ audioCtx.close(); }catch{} audioCtx=null; }
+  if(displayStream){ try{ displayStream.getTracks().forEach(t=>t.stop()); }catch{} displayStream=null; }
+  if(srcStream){ try{ srcStream.getTracks().forEach(t=>t.stop()); }catch{} srcStream=null; }
+
+  document.getElementById('tabBtn').disabled=false;
+  document.getElementById('stopStudent').disabled=true;
+  statusEl.textContent = keepTeacher ? 'listening (teacher)' : 'idle';
+  updateDiag({msg:'student stopped'});
+}
+
+/* ===== Hints ===== */
+let busy=false;
+async function requestHints(){
+  if(busy) return; busy=true;
+  try{
+    const r=await fetch('/api/hints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({teacher:tFull,student:sFull})});
+    const d=await r.json().catch(()=>null);
+    if(d?.card) prependCard(d.card);
+  }catch(e){ console.warn(e); }
+  busy=false;
+}
+function prependCard(card){
+  const has=(card.errors&&card.errors.length)||(card.definitions&&card.definitions.length)||(card.synonyms&&card.synonyms.length);
+  if(!has) return;
+  const div=document.createElement('div'); div.className='entry';
+  div.innerHTML=`<div class="cols">
+    <div class="col error"><h4>Errors & Fix</h4><div class="errors"></div></div>
+    <div class="col def"><h4>Definitions</h4><div class="defs"></div></div>
+    <div class="col syn"><h4>Synonyms</h4><div class="syns"></div></div>
+  </div>`;
+  const eW=div.querySelector('.errors'), dW=div.querySelector('.defs'), sW=div.querySelector('.syns');
+  (card.errors||[]).forEach(e=>{ const el=document.createElement('div'); el.className='errItem'; el.innerHTML=`<b>${e.title||'Mistake'}</b><br>❌ ${e.wrong||''}<br>✅ ${e.fix||''}<div>${e.explanation||''}</div>`; eW.appendChild(el); });
+  (card.definitions||[]).forEach(x=>{ const el=document.createElement('div'); el.className='defItem'; el.innerHTML=`<b>${x.word||''}</b> (${x.pos||''}) — ${x.simple_def||''}${x.example?`<div class="ex">e.g., ${x.example}</div>`:''}`; dW.appendChild(el); });
+  (card.synonyms||[]).forEach(x=>{ const el=document.createElement('div'); el.className='synItem'; el.innerHTML=`<b>${x.word||''}</b> (${x.pos||''}) → ${(x.list||[]).join(', ')}`; sW.appendChild(el); });
+  feed.prepend(div); while(feed.children.length>30) feed.removeChild(feed.lastChild);
+}
+
+/* ===== Quick test ===== */
+document.getElementById('sendManual').onclick=()=>{
+  const el=document.getElementById('manualText'); const t=el.value.trim(); if(!t) return;
+  tFull=tFull?(tFull+' '+t):t; teacherOut.textContent=tFull;
+  const tt=tail(tFull); if(tt&&tt!==tLast){ tLast=tt; requestHints(); }
+  el.value='';
+  clearTimeout(tPauseTimer); tPauseTimer=setTimeout(()=>{ tFull=''; tLast=''; teacherOut.textContent='—'; }, PAUSE_MS);
+};
+
+/* ===== Bindings ===== */
+document.getElementById('micBtn').onclick=startTeacher;
+document.getElementById('stopTeacher').onclick=stopTeacher;
+document.getElementById('tabBtn').onclick=startStudent;
+document.getElementById('stopStudent').onclick=stopStudent;
+document.getElementById('forceFlush').onclick=()=>manualFlush();
+
+updateDiag();
+</script>
+</body>
+</html>
