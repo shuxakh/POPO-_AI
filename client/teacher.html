@@ -18,13 +18,17 @@
     @media(max-width:900px){.twocol{grid-template-columns:1fr}}
     .feed{display:flex;flex-direction:column;gap:12px}
     .entry{background:#fff;border:1px solid #ddd;border-radius:12px;padding:10px}
-    .transCard{border:1px solid #d3dcff;border-radius:12px;background:#f3f5ff;padding:12px}
-    .transCard h4{margin:0 0 8px}
-    .transList{display:flex;flex-direction:column;gap:8px}
-    .transItem{background:#fff;border:1px solid #c5d4ff;border-radius:10px;padding:10px}
-    .transHead{display:flex;justify-content:space-between;align-items:center;gap:8px}
-    .posTag{font-size:.8rem;color:#4f63a6;text-transform:uppercase;letter-spacing:.03em}
-    .ru{margin-top:4px;font-weight:600;color:#1f2a4d}
+    .cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+    @media(max-width:900px){.cols{grid-template-columns:1fr}}
+    .col{border:1px solid #ddd;border-radius:10px;padding:8px}
+    .error{background:#ffe9d6;border-color:#ffb980}
+    .def{background:#efe7ff;border-color:#c9b6ff}
+    .syn{background:#e8f7e8;border-color:#b8e6b8}
+    .errItem,.defItem,.synItem{margin:6px 0;padding:6px;border-radius:8px}
+    .errItem{background:#fff0e5;border:1px solid #ffc58a}
+    .defItem{background:#f5f0ff;border:1px solid #c9b6ff}
+    .synItem{background:#f0fff0;border:1px solid #b8e6b8}
+    .ex{color:#444;font-style:italic;margin-top:4px}
     .note{color:#666;font-size:.9rem}
     .diag{font-family:ui-monospace,Menlo,Consolas,monospace;background:#0b1020;color:#d9e1ff;border-radius:12px;border:1px solid #263056;padding:12px;line-height:1.35;overflow:auto;position:relative}
     .ghost{position:absolute;right:8px;top:8px;opacity:.3}
@@ -82,7 +86,7 @@
     </div>
   </div>
 
-  <h3 style="margin-top:16px">AI translations (newest on top)</h3>
+  <h3 style="margin-top:16px">AI hints (newest on top)</h3>
   <div id="feed" class="feed"></div>
 
   <h3 style="margin-top:16px">Diagnostics</h3>
@@ -96,8 +100,7 @@
 
 <script>
 /* ===== STATE ===== */
-let SR, keepTeacher=false, tFull="", sFull="", sLast="";
-let hintBusy=false, hintNeedsRetry=false, lastStudentHint="";
+let SR, keepTeacher=false, tFull="", sFull="", tLast="", sLast="";
 let displayStream=null, srcStream=null;
 
 let audioCtx=null, sourceNode=null, gainNode=null, analyser=null, scriptNode=null;
@@ -139,7 +142,8 @@ function initSR(){
       if(r.isFinal){
         const piece=r[0].transcript.trim(); if(!piece) continue;
         tFull+=(tFull?' ':'')+piece; teacherOut.textContent=tFull;
-        clearTimeout(tPauseTimer); tPauseTimer=setTimeout(()=>{ tFull=''; teacherOut.textContent='—'; }, PAUSE_MS);
+        const tt=tail(tFull); if(tt && tt!==tLast){ tLast=tt; requestHints(); }
+        clearTimeout(tPauseTimer); tPauseTimer=setTimeout(()=>{ tFull=''; tLast=''; teacherOut.textContent='—'; }, PAUSE_MS);
       }else interim+=r[0].transcript;
     }
     if(interim) teacherOut.textContent=(tFull+' '+interim).trim();
@@ -149,7 +153,7 @@ function initSR(){
 async function startTeacher(){
   if(!supportsSR()){ alert('Update Chrome for SpeechRecognition API.'); return; }
   if(!SR) initSR(); try{ await navigator.mediaDevices.getUserMedia({audio:true}); }catch{}
-  tFull=""; teacherOut.textContent="Listening (Teacher Mic)…";
+  tFull=""; tLast=""; teacherOut.textContent="Listening (Teacher Mic)…";
   keepTeacher=true; SR.start();
   document.getElementById('micBtn').disabled=true;
   document.getElementById('stopTeacher').disabled=false;
@@ -215,7 +219,7 @@ async function uploadWavSamples(samples){
         sFull+=(sFull?' ':'')+text; studentOut.textContent=sFull;
         const st=tail(sFull); if(st && st!==sLast){ sLast=st; requestHints(); }
         clearTimeout(sPauseTimer);
-        sPauseTimer=setTimeout(()=>{ sFull=''; sLast=''; lastStudentHint=''; hintNeedsRetry=false; hintBusy=false; studentOut.textContent='—'; }, PAUSE_MS);
+        sPauseTimer=setTimeout(()=>{ sFull=''; sLast=''; studentOut.textContent='—'; }, PAUSE_MS);
       }else{
         updateDiag({msg:'STT ok, but empty text'});
       }
@@ -318,7 +322,7 @@ async function startStudent(){
   scriptNode.connect(audioCtx.destination);
 
   // reset UI/state
-  sFull=""; sLast=""; lastStudentHint=""; hintNeedsRetry=false; hintBusy=false; studentOut.textContent="Capturing Student Tab…";
+  sFull=""; sLast=""; studentOut.textContent="Capturing Student Tab…";
   flushes=0; lastFlushAt='—'; sttBusy=false; procCalls=0;
   document.getElementById('tabBtn').disabled=true;
   document.getElementById('stopStudent').disabled=false;
@@ -344,65 +348,33 @@ function stopStudent(){
   document.getElementById('tabBtn').disabled=false;
   document.getElementById('stopStudent').disabled=true;
   statusEl.textContent = keepTeacher ? 'listening (teacher)' : 'idle';
-  lastStudentHint="";
-  hintNeedsRetry=false;
-  hintBusy=false;
   updateDiag({msg:'student stopped'});
 }
 
 /* ===== Hints ===== */
+let busy=false;
 async function requestHints(){
-  const current = sFull.trim();
-  if(!current){
-    hintNeedsRetry=false;
-    lastStudentHint="";
-    return;
-  }
-  if(current===lastStudentHint && !hintNeedsRetry) return;
-  if(hintBusy){
-    hintNeedsRetry=true;
-    return;
-  }
-  hintBusy=true;
-  hintNeedsRetry=false;
+  if(busy) return; busy=true;
   try{
-    const r=await fetch('/api/hints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({student:current})});
-    if(!r.ok){
-      const t=await r.text().catch(()=> '');
-      console.warn('/api/hints', r.status, r.statusText, t);
-      return;
-    }
+    const r=await fetch('/api/hints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({teacher:tFull,student:sFull})});
     const d=await r.json().catch(()=>null);
     if(d?.card) prependCard(d.card);
-    lastStudentHint=current;
   }catch(e){ console.warn(e); }
-  finally{
-    hintBusy=false;
-    if(hintNeedsRetry){
-      hintNeedsRetry=false;
-      requestHints();
-    }
-  }
+  busy=false;
 }
 function prependCard(card){
-  const items=Array.isArray(card.translations)?card.translations:[];
-  if(!items.length) return;
+  const has=(card.errors&&card.errors.length)||(card.definitions&&card.definitions.length)||(card.synonyms&&card.synonyms.length);
+  if(!has) return;
   const div=document.createElement('div'); div.className='entry';
-  const listHtml=items.map(x=>{
-    const word=(x.word||'').trim();
-    const pos=(x.pos||'').trim();
-    const ru=(x.translation_ru||'').trim();
-    if(!word || !ru) return '';
-    return `<div class="transItem">
-      <div class="transHead"><b>${word}</b>${pos?`<span class="posTag">${pos}</span>`:''}</div>
-      <div class="ru">${ru}</div>
-    </div>`;
-  }).filter(Boolean).join('');
-  if(!listHtml) return;
-  div.innerHTML=`<div class="transCard">
-    <h4>Перевод слов студента</h4>
-    <div class="transList">${listHtml}</div>
+  div.innerHTML=`<div class="cols">
+    <div class="col error"><h4>Errors & Fix</h4><div class="errors"></div></div>
+    <div class="col def"><h4>Definitions</h4><div class="defs"></div></div>
+    <div class="col syn"><h4>Synonyms</h4><div class="syns"></div></div>
   </div>`;
+  const eW=div.querySelector('.errors'), dW=div.querySelector('.defs'), sW=div.querySelector('.syns');
+  (card.errors||[]).forEach(e=>{ const el=document.createElement('div'); el.className='errItem'; el.innerHTML=`<b>${e.title||'Mistake'}</b><br>❌ ${e.wrong||''}<br>✅ ${e.fix||''}<div>${e.explanation||''}</div>`; eW.appendChild(el); });
+  (card.definitions||[]).forEach(x=>{ const el=document.createElement('div'); el.className='defItem'; el.innerHTML=`<b>${x.word||''}</b> (${x.pos||''}) — ${x.simple_def||''}${x.example?`<div class="ex">e.g., ${x.example}</div>`:''}`; dW.appendChild(el); });
+  (card.synonyms||[]).forEach(x=>{ const el=document.createElement('div'); el.className='synItem'; el.innerHTML=`<b>${x.word||''}</b> (${x.pos||''}) → ${(x.list||[]).join(', ')}`; sW.appendChild(el); });
   feed.prepend(div); while(feed.children.length>30) feed.removeChild(feed.lastChild);
 }
 
@@ -410,8 +382,9 @@ function prependCard(card){
 document.getElementById('sendManual').onclick=()=>{
   const el=document.getElementById('manualText'); const t=el.value.trim(); if(!t) return;
   tFull=tFull?(tFull+' '+t):t; teacherOut.textContent=tFull;
+  const tt=tail(tFull); if(tt&&tt!==tLast){ tLast=tt; requestHints(); }
   el.value='';
-  clearTimeout(tPauseTimer); tPauseTimer=setTimeout(()=>{ tFull=''; teacherOut.textContent='—'; }, PAUSE_MS);
+  clearTimeout(tPauseTimer); tPauseTimer=setTimeout(()=>{ tFull=''; tLast=''; teacherOut.textContent='—'; }, PAUSE_MS);
 };
 
 /* ===== Bindings ===== */
