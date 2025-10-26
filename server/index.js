@@ -55,31 +55,26 @@ app.post("/api/stt_student", async (req, res) => {
   }
 });
 
-// ---------- Hints (student word translations) ----------
+// ---------- Hints (3 columns) ----------
 app.post("/api/hints", async (req, res) => {
   try {
-    const { student = "" } = req.body || {};
-    const studentText = (student || "").trim();
-    if (!studentText) return res.json({ card: null });
+    const { teacher = "", student = "" } = req.body || {};
+    const input = (teacher + " " + student).trim();
+    if (!input) return res.json({ card: null });
 
     const prompt = `
-You are a concise English-to-Russian teaching assistant.
-Use only the student's transcript below.
-Find distinct words that actually appear in the student's speech which are nouns, adjectives, pronouns, adverbs, or prepositions.
-Return JSON strictly in this shape:
+You are a concise English-teaching assistant. From the input text, produce a JSON with:
 {
-  "translations": [
-    {"word": "...", "pos": "noun|adjective|pronoun|adverb|preposition", "translation_ru": "..."}
-  ]
+  "errors": [{"title": "...", "wrong": "...", "fix": "...", "explanation": "..."}],
+  "definitions": [{"word": "...", "pos": "noun|verb|adj", "simple_def": "...", "example": "Use the word in a simple sentence."}],
+  "synonyms": [{"word": "...", "pos": "noun|verb|adj", "list": ["...","..."]}]
 }
-Rules:
-- Provide at most 8 items.
-- Use the lowercase base form of the English word.
-- Give a short (1-3 word) Russian translation.
-- Do not include verbs or any other parts of speech.
-- Avoid duplicates.
-- If no qualifying words are found, return an empty array.
-Student transcript: """${studentText}"""`;
+Rules for definitions:
+- Keep the example very short and in simple English.
+- Ensure the example is a natural sentence using the word correctly.
+- Do not include quotes around the example.
+Keep it short overall. Choose a few relevant nouns/verbs/adjectives.
+Input: """${input}"""`;
 
     const chat = await openai.chat.completions.create({
       model: "gpt-4.1-nano", // быстрые подсказки
@@ -91,7 +86,9 @@ Student transcript: """${studentText}"""`;
     let payload = {};
     try { payload = JSON.parse(chat.choices?.[0]?.message?.content || "{}"); } catch {}
     const card = {
-      translations: Array.isArray(payload.translations) ? payload.translations : [],
+      errors: Array.isArray(payload.errors) ? payload.errors : [],
+      definitions: Array.isArray(payload.definitions) ? payload.definitions : [],
+      synonyms: Array.isArray(payload.synonyms) ? payload.synonyms : [],
     };
     return res.json({ card });
   } catch (err) {
