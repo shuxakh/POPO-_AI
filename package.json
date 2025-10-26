@@ -1,15 +1,8 @@
 {
-  "name": "teacher-only-ai-tutor",
+  "name": "popo-ai",
   "version": "1.0.0",
-  "type": "module",
+  "private": true,
   "scripts": {
-    "start": "node server/index.js",
-    "start:host": "HOST=0.0.0.0 node server/index.js"
-  },
-  "dependencies": {
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "openai": "^4.56.0"
+    "start": "npx serve -s . -l $PORT"
   }
 }
